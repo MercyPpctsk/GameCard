@@ -134,8 +134,8 @@ def current_inputs(players):
 
 
 # Runs on every page, including the room-code screen
-# Select the whole number when a score box is focused, so typing replaces the
-# "0" instead of becoming "0100".
+# Blank a number box when it is focused, so typing replaces the "0"
+# instead of becoming "0100".
 st.iframe(
     """<script>
     // Home-screen icon + web-app title (iOS reads these when you tap "Add to Home Screen")
@@ -182,9 +182,20 @@ st.iframe(
     }
     if (!doc.__selectOnFocus) {
       doc.__selectOnFocus = true;
+      // iOS cannot select the text of a number box, so blank it on focus: typing
+      // then replaces the old number. If you leave it empty the old value returns.
+      const setVal = (el, v) =>
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, v);
+      const isNum = (el) => el && el.matches && el.matches("input[type=number]");
       doc.addEventListener("focusin", (e) => {
-        if (e.target.matches && e.target.matches("input[type=number]")) {
-          setTimeout(() => e.target.select(), 0);
+        if (isNum(e.target)) {
+          e.target.dataset.prev = e.target.value;
+          setVal(e.target, "");
+        }
+      });
+      doc.addEventListener("focusout", (e) => {
+        if (isNum(e.target) && e.target.value === "" && e.target.dataset.prev !== undefined) {
+          setVal(e.target, e.target.dataset.prev);
         }
       });
     }
