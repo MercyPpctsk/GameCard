@@ -4,7 +4,35 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Dummy Score Calculator", page_icon="🃏", layout="wide"
+    page_title="Dummy Score Calculator",
+    page_icon="static/favicon.png",
+    layout="wide",
+)
+
+st.markdown(
+    """
+    <style>
+    /* cleaner look: hide Streamlit's toolbar/footer, tighter spacing */
+    [data-testid="stToolbar"], [data-testid="stDecoration"], footer {display: none;}
+    [data-testid="stHeader"] {background: transparent;}
+    .block-container {padding-top: 2.5rem; padding-bottom: 2rem;}
+    @media (max-width: 640px) {
+      .block-container {padding-left: 0.9rem; padding-right: 0.9rem; padding-top: 2.5rem;}
+      h1 {font-size: 1.6rem !important;}
+      h2, h3 {font-size: 1.2rem !important;}
+      /* keep each player row (name | points | no meld) on one line */
+      .st-key-player_rows [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important; gap: 0.5rem !important; align-items: center;
+      }
+      .st-key-player_rows [data-testid="stColumn"] {min-width: 0 !important;}
+      .st-key-player_rows h3 {font-size: 1.3rem !important; padding: 0;}
+      /* bigger tap targets */
+      .stButton button {min-height: 3rem;}
+      input[type=number] {font-size: 1.1rem !important;}
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -232,11 +260,33 @@ with st.sidebar:
 
 # ----------------------------------------------------------------- main
 st.title("🃏 Dummy Score Calculator")
+st.caption(f"Room: {code}")
 
 # Select the whole number when a score box is focused, so typing replaces the
 # "0" instead of becoming "0100".
-st.components.v1.html(
+st.iframe(
     """<script>
+    // Home-screen icon + web-app title (iOS reads these when you tap "Add to Home Screen")
+    for (const w of [window.parent, window.top]) {
+      try {
+        const d = w.document;
+        if (d.__iconSet) continue;
+        d.__iconSet = true;
+        const base = w.location.origin + "/app/static/";
+        const add = (tag, attrs) => {
+          const el = d.createElement(tag);
+          Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+          d.head.appendChild(el);
+        };
+        d.querySelectorAll("link[rel*=icon]").forEach((l) => l.remove());
+        add("link", {rel: "apple-touch-icon", href: base + "apple-touch-icon.png"});
+        add("link", {rel: "icon", href: base + "favicon.png"});
+        add("meta", {name: "apple-mobile-web-app-capable", content: "yes"});
+        add("meta", {name: "mobile-web-app-capable", content: "yes"});
+        add("meta", {name: "apple-mobile-web-app-title", content: "Dummy"});
+        add("meta", {name: "apple-mobile-web-app-status-bar-style", content: "black"});
+      } catch (e) { /* cross-origin parent: skip */ }
+    }
     const doc = window.parent.document;
     if (!doc.__selectOnFocus) {
       doc.__selectOnFocus = true;
@@ -247,7 +297,7 @@ st.components.v1.html(
       });
     }
     </script>""",
-    height=0,
+    height=1,
 )
 players = list(room["players"])
 history = list(room["history"])
@@ -270,23 +320,24 @@ with left:
         knocker = st.session_state["knocker"]
 
         st.markdown("**Points per player**")
-        for p in players:
-            c_name, c_score, c_flag = st.columns([1, 2, 2], vertical_alignment="center")
-            c_name.markdown(f"### {p}")
-            c_score.number_input(
-                f"Points of {p}",
-                min_value=-999,
-                max_value=999,
-                value=0,
-                step=1,
-                key=f"score_{p}",
-                label_visibility="collapsed",
-            )
-            c_flag.checkbox(
-                "No meld",
-                key=f"nomeld_{p}",
-                disabled=(p == knocker),
-            )
+        with st.container(key="player_rows"):
+            for p in players:
+                c_name, c_score, c_flag = st.columns([1, 2, 2], vertical_alignment="center")
+                c_name.markdown(f"### {p}")
+                c_score.number_input(
+                    f"Points of {p}",
+                    min_value=-999,
+                    max_value=999,
+                    value=0,
+                    step=1,
+                    key=f"score_{p}",
+                    label_visibility="collapsed",
+                )
+                c_flag.checkbox(
+                    "No meld",
+                    key=f"nomeld_{p}",
+                    disabled=(p == knocker),
+                )
 
         st.checkbox("Dark knock", key="dark")
 
