@@ -1,3 +1,5 @@
+import threading
+
 import pandas as pd
 import streamlit as st
 
@@ -5,13 +7,40 @@ st.set_page_config(
     page_title="Dummy Score Calculator", page_icon="🃏", layout="wide"
 )
 
-# ---------------------------------------------------------------- state
-st.session_state.setdefault("players", ["A", "B", "C"])
-st.session_state.setdefault("history", [])
-st.session_state.setdefault("multiplier", 0.1)
-st.session_state.setdefault("dark_fee", 15.0)
+
+# ------------------------------------------------------- shared storage
+# One dict lives in the server process and is shared by every visitor, so
+# everyone in the same room sees the same game. It is lost when the app
+# restarts or goes to sleep.
+@st.cache_resource
+def get_store():
+    return {"lock": threading.RLock(), "rooms": {}}
 
 
+def get_room(code):
+    store = get_store()
+    with store["lock"]:
+        return store["rooms"].setdefault(
+            code,
+            {
+                "players": ["A", "B", "C"],
+                "history": [],
+                "multiplier": 0.1,
+                "dark_fee": 15.0,
+                "version": 0,
+            },
+        )
+
+
+def mutate(code, change):
+    """Apply change(room) under the lock and bump the version so others refresh."""
+    with get_store()["lock"]:
+        room = get_room(code)
+        change(room)
+        room["version"] += 1
+
+
+# ------------------------------------------------------------ the maths
 def compute_round(players, scores, knocker, dark, no_meld, mult, fee):
     """Return (money per player, transfers [(payer, payee, amount)], winner score used, winners)"""
     top_score = max(scores.values())
@@ -60,34 +89,59 @@ def current_inputs(players):
     return knocker, scores, st.session_state.get("dark", False), no_meld
 
 
+# ------------------------------------------------------------ room gate
+code = st.session_state.get("room") or st.query_params.get("room", "")
+code = code.strip().lower()
+
+if not code:
+    st.title("🃏 Dummy Score Calculator")
+    st.write("Enter a room code. Everyone who uses the same code sees the same game.")
+    with st.form("join_form"):
+        typed = st.text_input("Room code", placeholder="e.g. friday-night")
+        joined = st.form_submit_button("Join room", type="primary")
+    if joined and typed.strip():
+        st.session_state["room"] = typed.strip().lower()
+        st.query_params["room"] = typed.strip().lower()
+        st.rerun()
+    st.stop()
+
+st.session_state["room"] = code
+room = get_room(code)
+st.session_state["seen_version"] = room["version"]
+
+
+@st.fragment(run_every=3)
+def watch_for_changes(room_code):
+    """Reload the whole page when someone else changes the room."""
+    if get_room(room_code)["version"] != st.session_state.get("seen_version"):
+        st.rerun()
+
+
+watch_for_changes(code)
+
+
 def save_round():
-    players = st.session_state.players
+    r = get_room(code)
+    players = list(r["players"])
     knocker, scores, dark, no_meld = current_inputs(players)
     money, transfers, winner_score, _ = compute_round(
-        players,
-        scores,
-        knocker,
-        dark,
-        no_meld,
-        st.session_state.multiplier,
-        st.session_state.dark_fee,
+        players, scores, knocker, dark, no_meld, r["multiplier"], r["dark_fee"]
     )
-    st.session_state.history.append(
-        {
-            "knocker": knocker,
-            "is_dark": dark,
-            "dark_victims": no_meld,
-            "transfers": transfers,
-            "details": {
-                p: {
-                    "score": scores[p],
-                    "diff_points": winner_score - scores[p],
-                    "money": money[p],
-                }
-                for p in players
-            },
-        }
-    )
+    entry = {
+        "knocker": knocker,
+        "is_dark": dark,
+        "dark_victims": no_meld,
+        "transfers": transfers,
+        "details": {
+            p: {
+                "score": scores[p],
+                "diff_points": winner_score - scores[p],
+                "money": money[p],
+            }
+            for p in players
+        },
+    }
+    mutate(code, lambda rr: rr["history"].append(entry))
     # Clear the form for the next round
     for p in players:
         st.session_state[f"score_{p}"] = 0
@@ -98,26 +152,40 @@ def save_round():
 
 # -------------------------------------------------------------- sidebar
 with st.sidebar:
+    st.header(f"🏠 Room: {code}")
+    st.caption("Friends join by opening this page and entering the same code.")
+    if st.button("Leave room", width="stretch"):
+        st.session_state.pop("room", None)
+        st.query_params.clear()
+        st.rerun()
+
+    st.divider()
     st.header("⚙️ Game settings")
-    st.session_state.multiplier = st.number_input(
+    new_rate = st.number_input(
         "Rate per point (THB)",
         min_value=0.0,
-        value=float(st.session_state.multiplier),
+        value=float(room["multiplier"]),
         step=0.01,
         format="%.2f",
     )
-    st.session_state.dark_fee = st.number_input(
+    new_fee = st.number_input(
         "No-meld penalty (THB per player)",
         min_value=0.0,
-        value=float(st.session_state.dark_fee),
+        value=float(room["dark_fee"]),
         step=5.0,
     )
+    if new_rate != room["multiplier"] or new_fee != room["dark_fee"]:
+        mutate(
+            code,
+            lambda r: r.update(multiplier=float(new_rate), dark_fee=float(new_fee)),
+        )
+        st.rerun()
 
     st.divider()
     st.header("👥 Players")
-    st.write("  ".join(f"`{p}`" for p in st.session_state.players))
+    st.write("  ".join(f"`{p}`" for p in room["players"]))
 
-    if len(st.session_state.players) < 4:
+    if len(room["players"]) < 4:
         c_name, c_add = st.columns([3, 2])
         new_name = c_name.text_input(
             "New player name",
@@ -127,32 +195,62 @@ with st.sidebar:
         )
         if c_add.button("➕ Add", width="stretch"):
             name = new_name.strip()
-            if name and name not in st.session_state.players:
-                st.session_state.players.append(name)
-                st.rerun()
+
+            def add_player(r):
+                if name and name not in r["players"] and len(r["players"]) < 4:
+                    r["players"].append(name)
+
+            mutate(code, add_player)
+            st.rerun()
     else:
         st.caption("Maximum of 4 players")
 
-    if len(st.session_state.players) > 1:
+    if len(room["players"]) > 1:
         with st.popover("🗑️ Remove player", width="stretch"):
-            rem_p = st.selectbox("Choose a player to remove", st.session_state.players)
+            rem_p = st.selectbox("Choose a player to remove", room["players"])
             st.caption("Their history and balance stay in the summary")
             if st.button("Confirm remove", type="primary"):
-                st.session_state.players.remove(rem_p)
+                mutate(
+                    code,
+                    lambda r: r["players"].remove(rem_p)
+                    if rem_p in r["players"] and len(r["players"]) > 1
+                    else None,
+                )
                 st.rerun()
 
     st.divider()
     with st.popover("🔄 New game", width="stretch"):
-        st.write("Clear all history and balances?")
+        st.write("Clear all history and balances for everyone in this room?")
         if st.button("Yes, clear everything", type="primary"):
-            st.session_state.history = []
+            mutate(code, lambda r: r["history"].clear())
             st.rerun()
 
-    st.caption("Data lives in this page only. Refreshing or closing it loses everything.")
+    st.caption(
+        "Data is kept on the server while the app is awake. "
+        "If the app restarts or sleeps, the room is cleared."
+    )
 
 # ----------------------------------------------------------------- main
 st.title("🃏 Dummy Score Calculator")
-players = st.session_state.players
+
+# Select the whole number when a score box is focused, so typing replaces the
+# "0" instead of becoming "0100".
+st.components.v1.html(
+    """<script>
+    const doc = window.parent.document;
+    if (!doc.__selectOnFocus) {
+      doc.__selectOnFocus = true;
+      doc.addEventListener("focusin", (e) => {
+        if (e.target.matches && e.target.matches("input[type=number]")) {
+          setTimeout(() => e.target.select(), 0);
+        }
+      });
+    }
+    </script>""",
+    height=0,
+)
+players = list(room["players"])
+history = list(room["history"])
 
 left, middle, right = st.columns([1.2, 1, 1], gap="large")
 
@@ -171,16 +269,15 @@ with left:
         st.radio("Who knocked?", players, key="knocker", horizontal=True)
         knocker = st.session_state["knocker"]
 
-        for p in players:
-            st.session_state.setdefault(f"score_{p}", 0)
         st.markdown("**Points per player**")
         for p in players:
             c_name, c_score, c_flag = st.columns([1, 2, 2], vertical_alignment="center")
             c_name.markdown(f"### {p}")
             c_score.number_input(
                 f"Points of {p}",
-                min_value=-500,
-                max_value=500,
+                min_value=-999,
+                max_value=999,
+                value=0,
                 step=1,
                 key=f"score_{p}",
                 label_visibility="collapsed",
@@ -201,8 +298,8 @@ with left:
             knocker,
             dark,
             no_meld,
-            st.session_state.multiplier,
-            st.session_state.dark_fee,
+            room["multiplier"],
+            room["dark_fee"],
         )
         with st.container(border=True):
             st.markdown("**This round (preview before saving)**")
@@ -224,7 +321,6 @@ with left:
 with middle:
     st.subheader("② Summary")
 
-    history = st.session_state.history
     if not history:
         st.info("No data yet. Save the first round on the left.")
     else:
@@ -269,7 +365,7 @@ with right:
         st.info("No rounds played yet")
     else:
         if st.button("↩️ Undo last round", width="stretch"):
-            st.session_state.history.pop()
+            mutate(code, lambda r: r["history"].pop() if r["history"] else None)
             st.rerun()
 
         total_rounds = len(history)
