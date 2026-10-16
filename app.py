@@ -229,11 +229,6 @@ def save_round():
 with st.sidebar:
     st.header(f"🏠 Room: {code}")
     st.caption("Friends join by opening this page and entering the same code.")
-    if st.button("Leave room", width="stretch"):
-        st.session_state.pop("room", None)
-        st.query_params.clear()
-        st.rerun()
-
     st.divider()
     st.header("⚙️ Game settings")
     new_rate = st.number_input(
@@ -452,3 +447,10 @@ with right:
                     ]
                 )
                 st.dataframe(df, hide_index=True, width="stretch")
+
+# ---------------- Bottom: leave the room
+st.divider()
+if st.button("Leave room", type="primary"):
+    st.session_state.pop("room", None)
+    st.query_params.clear()
+    st.rerun()
