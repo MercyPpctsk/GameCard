@@ -22,8 +22,9 @@ st.markdown(
     .st-key-settings_row [data-testid="stColumn"]:nth-child(-n+2) {
       min-width: 5.5rem !important; flex: 0 0 5.5rem !important; width: 5.5rem !important;
     }
-    .st-key-settings_row [data-testid="stNumberInputStepUp"],
-    .st-key-settings_row [data-testid="stNumberInputStepDown"] {display: none;}
+    /* type the number: no +/- stepper buttons on any number box */
+    [data-testid="stNumberInputStepUp"],
+    [data-testid="stNumberInputStepDown"] {display: none;}
     @media (max-width: 640px) {
       .block-container {padding-left: 0.9rem; padding-right: 0.9rem; padding-top: 2.5rem;}
       h1 {font-size: 1.6rem !important;}
@@ -40,6 +41,7 @@ st.markdown(
       .st-key-settings_row [data-testid="stColumn"],
       .st-key-bottom_row [data-testid="stColumn"] {min-width: 0 !important;}
       .st-key-player_rows h3 {font-size: 1.3rem !important; padding: 0;}
+      .st-key-player_rows .stButton button {min-height: 2.4rem; padding: 0 0.4rem;}
       /* bigger tap targets */
       .stButton button {min-height: 3rem;}
       input[type=number] {font-size: 1.1rem !important;}
@@ -165,6 +167,19 @@ st.iframe(
       } catch (e) { /* cross-origin parent: skip */ }
     }
     const doc = window.parent.document;
+    // Phone keypad: digits only for points ("±" button flips the sign),
+    // digits + decimal point for the rate and penalty boxes.
+    if (!doc.__inputModeSet) {
+      doc.__inputModeSet = true;
+      const apply = () => {
+        doc.querySelectorAll("input[type=number]").forEach((el) => {
+          const label = el.getAttribute("aria-label") || "";
+          el.setAttribute("inputmode", label.startsWith("Points of") ? "numeric" : "decimal");
+        });
+      };
+      apply();
+      new MutationObserver(apply).observe(doc.body, {childList: true, subtree: true});
+    }
     if (!doc.__selectOnFocus) {
       doc.__selectOnFocus = true;
       doc.addEventListener("focusin", (e) => {
@@ -259,6 +274,11 @@ def remove_player_cb(name):
     mutate(code, remove)
 
 
+def flip_sign_cb(name):
+    key = f"score_{name}"
+    st.session_state[key] = -st.session_state.get(key, 0)
+
+
 def clear_history_cb():
     mutate(code, lambda r: r["history"].clear())
 
@@ -327,8 +347,8 @@ with left:
         st.markdown("**Points per player**")
         with st.container(key="player_rows"):
             for p in players:
-                c_name, c_score, c_flag, c_del = st.columns(
-                    [0.9, 2, 1.9, 0.9], vertical_alignment="center"
+                c_name, c_score, c_sign, c_flag, c_del = st.columns(
+                    [0.6, 2, 0.8, 1.6, 1.0], vertical_alignment="center"
                 )
                 c_name.markdown(f"### {p}")
                 c_score.number_input(
@@ -339,6 +359,13 @@ with left:
                     step=1,
                     key=f"score_{p}",
                     label_visibility="collapsed",
+                )
+                c_sign.button(
+                    "±",
+                    key=f"sign_{p}",
+                    on_click=flip_sign_cb,
+                    args=(p,),
+                    help="Switch between positive and negative",
                 )
                 c_flag.checkbox(
                     "No meld",
