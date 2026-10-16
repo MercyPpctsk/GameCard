@@ -278,6 +278,13 @@ st.iframe(
           Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
           d.head.appendChild(el);
         };
+        // Dark status/address-bar tint instead of the white one Streamlit Cloud sets
+        let tc = d.querySelector("meta[name=theme-color]");
+        if (!tc) { tc = d.createElement("meta"); tc.setAttribute("name", "theme-color"); d.head.appendChild(tc); }
+        tc.setAttribute("content", "#0e1117");
+        d.documentElement.style.background = "#0e1117";
+        if (d.body) d.body.style.background = "#0e1117";
+        d.title = "Dummy Score";
         d.querySelectorAll("link[rel*=icon]").forEach((l) => l.remove());
         add("link", {rel: "apple-touch-icon", href: base + "apple-touch-icon.png"});
         add("link", {rel: "icon", href: base + "favicon.png"});
