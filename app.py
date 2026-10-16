@@ -12,19 +12,33 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* cleaner look: hide Streamlit's toolbar/footer, tighter spacing */
-    [data-testid="stToolbar"], [data-testid="stDecoration"], footer {display: none;}
+    /* cleaner look: hide Streamlit's toolbar buttons/footer (keep the sidebar toggle), tighter spacing */
+    [data-testid="stToolbarActions"], [data-testid="stMainMenu"],
+    [data-testid="stAppDeployButton"], [data-testid="stDecoration"], footer {display: none;}
     [data-testid="stHeader"] {background: transparent;}
     .block-container {padding-top: 2.5rem; padding-bottom: 2rem;}
+    /* rate/penalty boxes are narrow: type the value, no +/- buttons */
+    .st-key-settings_row input {padding-left: 0.25rem !important; padding-right: 0.25rem !important; text-align: center; font-size: 0.9rem !important;}
+    .st-key-settings_row [data-testid="stColumn"]:nth-child(-n+2) {
+      min-width: 5.5rem !important; flex: 0 0 5.5rem !important; width: 5.5rem !important;
+    }
+    .st-key-settings_row [data-testid="stNumberInputStepUp"],
+    .st-key-settings_row [data-testid="stNumberInputStepDown"] {display: none;}
     @media (max-width: 640px) {
       .block-container {padding-left: 0.9rem; padding-right: 0.9rem; padding-top: 2.5rem;}
       h1 {font-size: 1.6rem !important;}
       h2, h3 {font-size: 1.2rem !important;}
       /* keep each player row (name | points | no meld) on one line */
-      .st-key-player_rows [data-testid="stHorizontalBlock"] {
+      .st-key-player_rows [data-testid="stHorizontalBlock"],
+      .st-key-add_row [data-testid="stHorizontalBlock"],
+      .st-key-settings_row [data-testid="stHorizontalBlock"],
+      .st-key-bottom_row [data-testid="stHorizontalBlock"] {
         flex-wrap: nowrap !important; gap: 0.5rem !important; align-items: center;
       }
-      .st-key-player_rows [data-testid="stColumn"] {min-width: 0 !important;}
+      .st-key-player_rows [data-testid="stColumn"],
+      .st-key-add_row [data-testid="stColumn"],
+      .st-key-settings_row [data-testid="stColumn"],
+      .st-key-bottom_row [data-testid="stColumn"] {min-width: 0 !important;}
       .st-key-player_rows h3 {font-size: 1.3rem !important; padding: 0;}
       /* bigger tap targets */
       .stButton button {min-height: 3rem;}
@@ -225,84 +239,55 @@ def save_round():
     st.session_state["just_saved"] = True
 
 
-# -------------------------------------------------------------- sidebar
-with st.sidebar:
-    st.header(f"🏠 Room: {code}")
-    st.caption("Friends join by opening this page and entering the same code.")
-    st.divider()
-    st.header("⚙️ Game settings")
-    new_rate = st.number_input(
-        "Rate per point (THB)",
+# ----------------------------------------------------- player callbacks
+def add_player_cb():
+    name = st.session_state.get("new_player_input", "").strip()
+
+    def add(r):
+        if name and name not in r["players"] and len(r["players"]) < 4:
+            r["players"].append(name)
+
+    mutate(code, add)
+    st.session_state["new_player_input"] = ""
+
+
+def remove_player_cb(name):
+    def remove(r):
+        if name in r["players"] and len(r["players"]) > 1:
+            r["players"].remove(name)
+
+    mutate(code, remove)
+
+
+def clear_history_cb():
+    mutate(code, lambda r: r["history"].clear())
+
+
+# ----------------------------------------------------------------- main
+st.title("🃏 Dummy Score Calculator")
+st.caption(f"Room: {code}")
+
+with st.container(key="settings_row"):
+    c_rate, c_fee, _ = st.columns([1, 1, 10])
+    new_rate = c_rate.number_input(
+        "Rate (THB/pt)",
         min_value=0.0,
         value=float(room["multiplier"]),
         step=0.01,
         format="%.2f",
     )
-    new_fee = st.number_input(
-        "No-meld penalty (THB per player)",
+    new_fee = c_fee.number_input(
+        "Penalty (THB)",
         min_value=0.0,
         value=float(room["dark_fee"]),
         step=5.0,
     )
-    if new_rate != room["multiplier"] or new_fee != room["dark_fee"]:
-        mutate(
-            code,
-            lambda r: r.update(multiplier=float(new_rate), dark_fee=float(new_fee)),
-        )
-        st.rerun()
-
-    st.divider()
-    st.header("👥 Players")
-    st.write("  ".join(f"`{p}`" for p in room["players"]))
-
-    if len(room["players"]) < 4:
-        c_name, c_add = st.columns([3, 2])
-        new_name = c_name.text_input(
-            "New player name",
-            key="new_player_input",
-            placeholder="Name...",
-            label_visibility="collapsed",
-        )
-        if c_add.button("➕ Add", width="stretch"):
-            name = new_name.strip()
-
-            def add_player(r):
-                if name and name not in r["players"] and len(r["players"]) < 4:
-                    r["players"].append(name)
-
-            mutate(code, add_player)
-            st.rerun()
-    else:
-        st.caption("Maximum of 4 players")
-
-    if len(room["players"]) > 1:
-        with st.popover("🗑️ Remove player", width="stretch"):
-            rem_p = st.selectbox("Choose a player to remove", room["players"])
-            st.caption("Their history and balance stay in the summary")
-            if st.button("Confirm remove", type="primary"):
-                mutate(
-                    code,
-                    lambda r: r["players"].remove(rem_p)
-                    if rem_p in r["players"] and len(r["players"]) > 1
-                    else None,
-                )
-                st.rerun()
-
-    st.divider()
-    with st.popover("🔄 New game", width="stretch"):
-        st.write("Clear all history and balances for everyone in this room?")
-        if st.button("Yes, clear everything", type="primary"):
-            mutate(code, lambda r: r["history"].clear())
-            st.rerun()
-
-    st.caption(
-        "Data is kept on the server while the app is awake. "
-        "If the app restarts or sleeps, the room is cleared."
+if new_rate != room["multiplier"] or new_fee != room["dark_fee"]:
+    mutate(
+        code,
+        lambda r: r.update(multiplier=float(new_rate), dark_fee=float(new_fee)),
     )
-
-# ----------------------------------------------------------------- main
-st.title("🃏 Dummy Score Calculator")
-st.caption(f"Room: {code}")
+    st.rerun()
 
 players = list(room["players"])
 history = list(room["history"])
@@ -313,8 +298,23 @@ left, middle, right = st.columns([1.2, 1, 1], gap="large")
 with left:
     st.subheader("① Record this round")
 
+    def add_player_box():
+        if len(players) >= 4:
+            st.caption("Maximum of 4 players")
+            return
+        with st.container(key="add_row"):
+            c_name, c_add = st.columns([3, 2], vertical_alignment="center")
+            c_name.text_input(
+                "New player name",
+                key="new_player_input",
+                placeholder="New player name",
+                label_visibility="collapsed",
+            )
+            c_add.button("➕ Add player", width="stretch", on_click=add_player_cb)
+
     if len(players) < 2:
-        st.warning("You need at least 2 players. Add them in the left sidebar.")
+        st.warning("You need at least 2 players. Add one below.")
+        add_player_box()
     else:
         if st.session_state.pop("just_saved", False):
             st.toast("Round saved", icon="✅")
@@ -327,7 +327,9 @@ with left:
         st.markdown("**Points per player**")
         with st.container(key="player_rows"):
             for p in players:
-                c_name, c_score, c_flag = st.columns([1, 2, 2], vertical_alignment="center")
+                c_name, c_score, c_flag, c_del = st.columns(
+                    [0.9, 2, 1.9, 0.9], vertical_alignment="center"
+                )
                 c_name.markdown(f"### {p}")
                 c_score.number_input(
                     f"Points of {p}",
@@ -343,7 +345,18 @@ with left:
                     key=f"nomeld_{p}",
                     disabled=(p == knocker),
                 )
+                with c_del.popover("🗑️"):
+                    st.write(f"Remove {p} from the game?")
+                    st.caption("Past rounds and balance stay in the summary.")
+                    st.button(
+                        "Remove",
+                        type="primary",
+                        key=f"rm_{p}",
+                        on_click=remove_player_cb,
+                        args=(p,),
+                    )
 
+        add_player_box()
         st.checkbox("Dark knock", key="dark")
 
         # ----- Preview before saving
@@ -448,9 +461,19 @@ with right:
                 )
                 st.dataframe(df, hide_index=True, width="stretch")
 
-# ---------------- Bottom: leave the room
+# ---------------- Bottom: new game / leave the room
 st.divider()
-if st.button("Leave room", type="primary"):
-    st.session_state.pop("room", None)
-    st.query_params.clear()
-    st.rerun()
+with st.container(key="bottom_row"):
+    c_new, c_leave, _ = st.columns([1, 1, 1])
+    with c_new.popover("🔄 New game"):
+        st.write("Clear all history and balances for everyone in this room?")
+        st.button("Yes, clear everything", type="primary", on_click=clear_history_cb)
+    if c_leave.button("Leave room", type="primary"):
+        st.session_state.pop("room", None)
+        st.query_params.clear()
+        st.rerun()
+
+st.caption(
+    "Data is kept on the server while the app is awake. "
+    "If the app restarts or sleeps, the room is cleared."
+)
