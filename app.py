@@ -117,6 +117,53 @@ def current_inputs(players):
     return knocker, scores, st.session_state.get("dark", False), no_meld
 
 
+# Runs on every page, including the room-code screen
+# Select the whole number when a score box is focused, so typing replaces the
+# "0" instead of becoming "0100".
+st.iframe(
+    """<script>
+    // Home-screen icon + web-app title (iOS reads these when you tap "Add to Home Screen")
+    for (const w of [window.parent, window.top]) {
+      try {
+        const d = w.document;
+        if (d.__iconSet) continue;
+        d.__iconSet = true;
+        const base = w.location.origin + "/app/static/";
+        const add = (tag, attrs) => {
+          const el = d.createElement(tag);
+          Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+          d.head.appendChild(el);
+        };
+        // Dark status/address-bar tint instead of the white one Streamlit Cloud sets
+        let tc = d.querySelector("meta[name=theme-color]");
+        if (!tc) { tc = d.createElement("meta"); tc.setAttribute("name", "theme-color"); d.head.appendChild(tc); }
+        tc.setAttribute("content", "#0e1117");
+        d.documentElement.style.background = "#0e1117";
+        if (d.body) d.body.style.background = "#0e1117";
+        d.title = "Dummy Score";
+        d.querySelectorAll("link[rel*=icon]").forEach((l) => l.remove());
+        add("link", {rel: "apple-touch-icon", href: base + "apple-touch-icon.png"});
+        add("link", {rel: "icon", href: base + "favicon.png"});
+        add("meta", {name: "apple-mobile-web-app-capable", content: "yes"});
+        add("meta", {name: "mobile-web-app-capable", content: "yes"});
+        add("meta", {name: "apple-mobile-web-app-title", content: "Dummy"});
+        add("meta", {name: "apple-mobile-web-app-status-bar-style", content: "black"});
+      } catch (e) { /* cross-origin parent: skip */ }
+    }
+    const doc = window.parent.document;
+    if (!doc.__selectOnFocus) {
+      doc.__selectOnFocus = true;
+      doc.addEventListener("focusin", (e) => {
+        if (e.target.matches && e.target.matches("input[type=number]")) {
+          setTimeout(() => e.target.select(), 0);
+        }
+      });
+    }
+    </script>""",
+    height=1,
+)
+
+
 # ------------------------------------------------------------ room gate
 code = st.session_state.get("room") or st.query_params.get("room", "")
 code = code.strip().lower()
@@ -262,50 +309,6 @@ with st.sidebar:
 st.title("🃏 Dummy Score Calculator")
 st.caption(f"Room: {code}")
 
-# Select the whole number when a score box is focused, so typing replaces the
-# "0" instead of becoming "0100".
-st.iframe(
-    """<script>
-    // Home-screen icon + web-app title (iOS reads these when you tap "Add to Home Screen")
-    for (const w of [window.parent, window.top]) {
-      try {
-        const d = w.document;
-        if (d.__iconSet) continue;
-        d.__iconSet = true;
-        const base = w.location.origin + "/app/static/";
-        const add = (tag, attrs) => {
-          const el = d.createElement(tag);
-          Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
-          d.head.appendChild(el);
-        };
-        // Dark status/address-bar tint instead of the white one Streamlit Cloud sets
-        let tc = d.querySelector("meta[name=theme-color]");
-        if (!tc) { tc = d.createElement("meta"); tc.setAttribute("name", "theme-color"); d.head.appendChild(tc); }
-        tc.setAttribute("content", "#0e1117");
-        d.documentElement.style.background = "#0e1117";
-        if (d.body) d.body.style.background = "#0e1117";
-        d.title = "Dummy Score";
-        d.querySelectorAll("link[rel*=icon]").forEach((l) => l.remove());
-        add("link", {rel: "apple-touch-icon", href: base + "apple-touch-icon.png"});
-        add("link", {rel: "icon", href: base + "favicon.png"});
-        add("meta", {name: "apple-mobile-web-app-capable", content: "yes"});
-        add("meta", {name: "mobile-web-app-capable", content: "yes"});
-        add("meta", {name: "apple-mobile-web-app-title", content: "Dummy"});
-        add("meta", {name: "apple-mobile-web-app-status-bar-style", content: "black"});
-      } catch (e) { /* cross-origin parent: skip */ }
-    }
-    const doc = window.parent.document;
-    if (!doc.__selectOnFocus) {
-      doc.__selectOnFocus = true;
-      doc.addEventListener("focusin", (e) => {
-        if (e.target.matches && e.target.matches("input[type=number]")) {
-          setTimeout(() => e.target.select(), 0);
-        }
-      });
-    }
-    </script>""",
-    height=1,
-)
 players = list(room["players"])
 history = list(room["history"])
 
