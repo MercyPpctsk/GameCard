@@ -318,7 +318,13 @@ def watch_for_changes(room_code):
     if r["version"] != st.session_state.get("seen_version"):
         st.rerun()
     if r.get("mode") == "holdem":
-        T = r["holdem"]
+        T = hd.ensure(r["holdem"])
+        if hd.should_auto_deal(T):
+            try:
+                mutate(room_code, lambda rr: hd.auto_deal(hd.ensure(rr["holdem"])))
+            except ValueError:
+                pass  # another visitor's page dealt it first
+            st.rerun()
         if hd.timed_out(T):
             key = (T["hand"]["id"], T["hand"]["to_act"])
             if st.session_state.get("seen_timeout") != key:
@@ -483,6 +489,11 @@ def hd_rebuy_cb():
     _hd_run(go)
 
 
+def hd_auto_cb():
+    flag = bool(st.session_state.get("hd_auto"))
+    _hd_run(lambda r: hd.set_auto_deal(r["holdem"], flag))
+
+
 def hd_end_cb():
     _hd_run(lambda r: hd.end_game(r["holdem"]))
 
@@ -556,6 +567,12 @@ if mode == "holdem":
             st.session_state["hd_err"] = str(e)
         st.rerun()
 
+    synced = st.session_state.setdefault("_synced", {})
+    if synced.get("hd_auto") != t["auto_deal"]:
+        st.session_state["hd_auto"] = t["auto_deal"]
+        synced["hd_auto"] = t["auto_deal"]
+    st.checkbox("Auto-deal the next hand", key="hd_auto", on_change=hd_auto_cb)
+
     # ---- the felt: board and pot
     board = h["board"] if h else []
     slots = "".join(card_html(c) for c in board) + "".join(
@@ -566,6 +583,10 @@ if mode == "holdem":
         f'<div class="felt"><div class="pot">{street} &nbsp;|&nbsp; Pot {hd.pot_total(h):,}</div>{slots}</div>',
         unsafe_allow_html=True,
     )
+
+    if h and h.get("draw"):
+        who = " · ".join(f"{t['seats'][s]['name']} {hd.card_text(c)}" for s, c in h["draw"].items())
+        st.caption(f"Draw for the button: {who}. {t['seats'][h['dealer']]['name']} is the dealer.")
 
     # ---- result of the last hand
     if h and not live_hand and h.get("result"):
@@ -706,8 +727,10 @@ if mode == "holdem":
 
         if not live_hand and not t["ended"]:
             if hd.can_deal(t):
+                if h and t["auto_deal"]:
+                    st.caption(f"The next hand is dealt automatically in about {hd.AUTO_DEAL_SECONDS} seconds.")
                 st.button(
-                    "Deal next hand" if h else "Deal",
+                    "Deal now" if h else "Deal",
                     type="primary",
                     width="stretch",
                     key="a_deal",

@@ -27,6 +27,8 @@ HAND_NAMES = [
 ]
 MAX_SEATS = 9
 TURN_SECONDS = 60
+AUTO_DEAL_SECONDS = 8  # how long the result stays up before the next hand is dealt
+SUIT_SYMBOL = {"s": "\u2660", "h": "\u2665", "d": "\u2666", "c": "\u2663"}
 
 
 # ------------------------------------------------------------------ cards
@@ -36,6 +38,10 @@ def new_deck():
 
 def rank_value(card):
     return RANKS.index(card[0]) + 2
+
+
+def card_text(card):
+    return ("10" if card[0] == "T" else card[0]) + SUIT_SYMBOL[card[1]]
 
 
 def score5(cards):
@@ -103,6 +109,7 @@ def new_table(start_chips=1000, sb=10, bb=20):
         "ledger": {},  # pid -> {"name", "buys", "in", "out"}
         "chip_value": 1.0,  # THB per chip, only used for the settlement
         "ended": False,  # True once somebody pressed "End game"
+        "auto_deal": True,  # deal the next hand by itself after AUTO_DEAL_SECONDS
     }
 
 
@@ -110,6 +117,7 @@ def ensure(t):
     """Fill in fields that tables created by older code do not have."""
     t.setdefault("chip_value", 1.0)
     t.setdefault("ended", False)
+    t.setdefault("auto_deal", True)
     return t
 
 
@@ -238,16 +246,25 @@ def start_hand(t, rng=None, deck=None):
     elig = [i for i, s in enumerate(t["seats"]) if s and s["chips"] > 0]
     if len(elig) < 2:
         raise ValueError("Need at least 2 players with chips")
-    dealer = None
-    for k in range(1, n + 1):
-        c = (t["dealer"] + k) % n
-        if c in elig:
-            dealer = c
-            break
+    rng = rng or random.SystemRandom()
+    draw = None
+    if t["dealer"] == -1 and deck is None:
+        # first hand: everyone draws a card, highest card gets the button (spades > hearts > diamonds > clubs)
+        cards = new_deck()
+        rng.shuffle(cards)
+        draw = {s: cards.pop() for s in elig}
+        dealer = max(elig, key=lambda s: (rank_value(draw[s]), "cdhs".index(draw[s][1])))
+    else:
+        dealer = None
+        for k in range(1, n + 1):
+            c = (t["dealer"] + k) % n
+            if c in elig:
+                dealer = c
+                break
     order = [(dealer + k) % n for k in range(1, n + 1) if (dealer + k) % n in elig]
     if deck is None:
         deck = new_deck()
-        (rng or random.SystemRandom()).shuffle(deck)
+        rng.shuffle(deck)
     else:
         deck = list(deck)
     hole = {s: [] for s in elig}
@@ -279,10 +296,15 @@ def start_hand(t, rng=None, deck=None):
         "turn_started": time.time(),
         "events": [],
         "result": None,
+        "draw": draw,
+        "ended_at": None,
     }
     t["hand_no"] += 1
     t["dealer"] = dealer
     t["hand"] = h
+    if draw:
+        shown = ", ".join(f"{t['seats'][s]['name']} {card_text(draw[s])}" for s in elig)
+        _log(h, f"Draw for the button: {shown}. {t['seats'][dealer]['name']} is the dealer")
     sbn = t["seats"][sb_seat]["name"]
     bbn = t["seats"][bb_seat]["name"]
     _put(t, h, sb_seat, min(t["sb"], t["seats"][sb_seat]["chips"]))
@@ -455,6 +477,7 @@ def _win_uncontested(t, winner):
     }
     h["street"] = "done"
     h["to_act"] = None
+    h["ended_at"] = time.time()
 
 
 def _showdown(t):
@@ -484,6 +507,7 @@ def _showdown(t):
     h["result"] = {"type": "showdown", "pots": out, "hands": hands, "won": won}
     h["street"] = "done"
     h["to_act"] = None
+    h["ended_at"] = time.time()
 
 
 def set_chip_value(t, value):
@@ -549,6 +573,30 @@ def settlements(t):
 
 def pot_total(h):
     return sum(h["total"].values()) if h else 0
+
+
+def set_auto_deal(t, flag):
+    t["auto_deal"] = bool(flag)
+
+
+def should_auto_deal(t, now=None):
+    h = t.get("hand")
+    return bool(
+        t.get("auto_deal", True)
+        and not t.get("ended")
+        and h
+        and h["street"] == "done"
+        and h.get("ended_at")
+        and can_deal(t)
+        and (now or time.time()) - h["ended_at"] >= AUTO_DEAL_SECONDS
+    )
+
+
+def auto_deal(t, rng=None, now=None):
+    """Deal the next hand if the result has been on screen long enough (several clients may race)."""
+    if not should_auto_deal(t, now):
+        raise ValueError("Not time to deal yet")
+    start_hand(t, rng=rng)
 
 
 def timed_out(t, now=None):
