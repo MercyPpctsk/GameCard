@@ -1,0 +1,12 @@
+# Secrets: never commit these (this repository is public)
+.streamlit/secrets.toml
+secrets.toml
+.env
+
+# Local data and caches
+__pycache__/
+*.pyc
+rooms_data/
+
+# Personal notes that contain private links
+HANDOFF.md

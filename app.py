@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 import holdem as hd
+import storage
 
 st.set_page_config(
     page_title="Dummy Score Calculator",
@@ -90,40 +91,54 @@ st.markdown(
 
 # ------------------------------------------------------- shared storage
 # One dict lives in the server process and is shared by every visitor, so
-# everyone in the same room sees the same game. It is lost when the app
-# restarts or goes to sleep.
+# everyone in the same room sees the same game. When a database is configured
+# (Streamlit secrets [supabase] url/key) every change is also saved there in the
+# background and a room is loaded back the first time it is opened after a restart.
 @st.cache_resource
 def get_store():
-    return {"lock": threading.RLock(), "rooms": {}}
+    rooms, lock = {}, threading.RLock()
+    try:
+        secrets = {"supabase": dict(st.secrets["supabase"])}
+    except Exception:  # no secrets file or no [supabase] section: memory only
+        secrets = {}
+    saver = storage.RoomSaver(storage.make_backend(secrets), lock, rooms)
+    return {"lock": lock, "rooms": rooms, "saver": saver}
 
 
 def get_room(code, mode="dummy"):
-    """Return the room, creating it in `mode` ("dummy" or "poker") if it is new."""
+    """Return the room: from memory, else from the database, else a new one in `mode`.
+
+    Raises storage.StoreError if the database is configured but unreachable, so an
+    empty room is never created on top of a saved one.
+    """
     store = get_store()
     with store["lock"]:
-        room = store["rooms"].setdefault(
-            code,
-            {
-                "mode": mode,
-                "players": ["A", "B", "C", "D"] if mode == "poker" else ["A", "B", "C"],
-                "history": [],
-                "multiplier": 0.1,
-                "dark_fee": 15.0,
-                # poker cash-game ledger: buy-ins per player, chips left at cash-out
-                "poker": {"chip_value": 1.0, "buyin_chips": 100, "buys": {}, "cash": {}},
-                "holdem": hd.new_table(),
-                "version": 0,
-            },
-        )
-        return room
+        room = store["rooms"].get(code)
+    if room is None:
+        saved = store["saver"].load(code)
+        fresh = storage.restore_room(saved) if saved else storage.new_room(mode)
+        with store["lock"]:
+            room = store["rooms"].setdefault(code, fresh)
+    return room
 
 
 def mutate(code, change):
-    """Apply change(room) under the lock and bump the version so others refresh."""
-    with get_store()["lock"]:
+    """Apply change(room) under the lock, bump the version so others refresh, queue a save."""
+    store = get_store()
+    with store["lock"]:
         room = get_room(code)
         change(room)
         room["version"] += 1
+    store["saver"].mark_dirty(code)
+
+
+def storage_note():
+    saver = get_store()["saver"]
+    if saver.last_error:
+        return "Warning: saving to the database failed, so your latest changes may not be kept."
+    if saver.enabled:
+        return "Rooms are saved to a database, so they survive restarts and sleep."
+    return "Rooms are only kept in server memory: if the app restarts or sleeps, they are cleared."
 
 
 # ------------------------------------------------------------ the maths
@@ -302,7 +317,11 @@ if not code:
 
 st.session_state["room"] = code
 _hint = st.session_state.get("new_mode") or st.query_params.get("game", "dummy")
-room = get_room(code, _hint if _hint in ("dummy", "poker", "holdem") else "dummy")
+try:
+    room = get_room(code, _hint if _hint in ("dummy", "poker", "holdem") else "dummy")
+except storage.StoreError:
+    st.error("Cannot reach the room database right now. Wait a moment and reload this page.")
+    st.stop()
 mode = room.get("mode", "dummy")
 st.session_state["seen_version"] = room["version"]
 
@@ -819,8 +838,7 @@ if mode == "holdem":
         else:
             c_leave.caption("Stand up first to leave")
     st.caption(
-        "Cards are dealt by the server and only you can see yours. "
-        "Data is kept on the server while the app is awake; if it restarts or sleeps, the table is cleared."
+        "Cards are dealt by the server and only you can see yours. " + storage_note()
     )
     st.stop()
 
@@ -952,10 +970,7 @@ if mode == "poker":
             st.session_state.pop("new_mode", None)
             st.query_params.clear()
             st.rerun()
-    st.caption(
-        "Data is kept on the server while the app is awake. "
-        "If the app restarts or sleeps, the room is cleared."
-    )
+    st.caption(storage_note())
     st.stop()
 
 
@@ -1171,7 +1186,4 @@ with st.container(key="bottom_row"):
         st.query_params.clear()
         st.rerun()
 
-st.caption(
-    "Data is kept on the server while the app is awake. "
-    "If the app restarts or sleeps, the room is cleared."
-)
+st.caption(storage_note())

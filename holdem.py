@@ -298,6 +298,7 @@ def start_hand(t, rng=None, deck=None):
         "result": None,
         "draw": draw,
         "ended_at": None,
+        "prev_dealer": t["dealer"],  # so a cancelled hand can put the button back
     }
     t["hand_no"] += 1
     t["dealer"] = dealer
@@ -612,6 +613,24 @@ def timeout_fold(t, now=None):
     h = t["hand"]
     seat = h["to_act"]
     act(t, seat, "check" if legal(t, seat)["can_check"] else "fold")
+
+
+def to_saveable(t):
+    """A JSON-safe copy for the database.
+
+    A hand in progress is cancelled: every chip in the pot goes back to the player who put
+    it in, the button returns to where it was and the hand number is rewound, so a restart
+    never makes anybody lose chips. A finished hand is dropped (stacks are already paid out).
+    """
+    c = copy.deepcopy(ensure(t))
+    h = c.get("hand")
+    if h and h["street"] != "done":
+        for seat, put in h["total"].items():
+            c["seats"][seat]["chips"] += put
+        c["dealer"] = h.get("prev_dealer", c["dealer"])
+        c["hand_no"] -= 1
+    c["hand"] = None
+    return c
 
 
 def snapshot(t):
