@@ -321,8 +321,9 @@ st.session_state["room"] = code
 _hint = st.session_state.get("new_mode") or st.query_params.get("game", "dummy")
 try:
     room = get_room(code, _hint if _hint in ("dummy", "poker", "holdem") else "dummy")
-except storage.StoreError:
-    st.error("Cannot reach the room database right now. Wait a moment and reload this page.")
+except storage.StoreError as _err:
+    storage.LOG.warning("loading room failed: %s", _err)
+    st.error(f"Cannot reach the room database right now. Wait a moment and reload this page. ({str(_err)[:120]})")
     st.stop()
 mode = room.get("mode", "dummy")
 st.session_state["seen_version"] = room["version"]
