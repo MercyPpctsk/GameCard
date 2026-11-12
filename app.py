@@ -97,10 +97,12 @@ st.markdown(
 @st.cache_resource
 def get_store():
     rooms, lock = {}, threading.RLock()
-    try:
-        secrets = {"supabase": dict(st.secrets["supabase"])}
-    except Exception:  # no secrets file or no [supabase] section: memory only
-        secrets = {}
+    secrets = {}
+    for section in ("supabase", "sheets"):
+        try:
+            secrets[section] = dict(st.secrets[section])
+        except Exception:  # no secrets file or no such section
+            pass
     saver = storage.RoomSaver(storage.make_backend(secrets), lock, rooms)
     return {"lock": lock, "rooms": rooms, "saver": saver}
 
